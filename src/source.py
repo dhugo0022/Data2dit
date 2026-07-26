@@ -30,6 +30,13 @@ class Source:
     def __iter__(self):
         return iter(astuple(self))
 
+def generate_sources_from_paths(kind: SourceKind, raw_sources: list[str]):
+    if type(kind) == None:
+        raise Exception("O tipo de fonte que está sendo convertido não pode ser None.")
+
+    new_sources = map(lambda raw_source: Source(kind, raw_source), raw_sources)
+    return new_sources
+
 class SourceKindValidator(Validator):
     def __init__(self, reference_source_kind: SourceKind):
         super().__init__()
@@ -118,7 +125,7 @@ class SourceTree():
     
     def __init__(self, sources: tuple[Source]):
         self.sources = sources
-        self.root = SourceTreeNode(None, None, None, {})
+        self.root = SourceTreeNode("root", None, Source(SourceKind.FOLDER, None), {})
 
     # Procurar por todos os arquivos (cuja a extensão é de um tipo de dado suportado)
     # imediatos dentro da pasta
@@ -131,7 +138,6 @@ class SourceTree():
         wrapped_path = Path(path)
 
         supported_children_path = [child for child in wrapped_path.rglob("*") if (child.is_file() and child.suffix[1:] in DATA_EXTENSIONS)]
-        print(supported_children_path)
 
         for supported_child_path in supported_children_path:
             supported_child_path.name
