@@ -1,29 +1,18 @@
 import sys
 import random
 from typing import List
-from dataclasses import dataclass, astuple
+from pathlib import Path
 
-from source import SourceTreeNode, SourceTree, generate_sources_from_paths, SourceKind
-from data import QT_FILE_DIALOG_NAME_FILTER
+from source import *
+from data import QT_FILE_DIALOG_NAME_FILTER, Data, DataGroup
+from state import state_bus
+import utils
 
+import PySide6.QtCore as QtCore
 from PySide6.QtCore import *
 from PySide6.QtGui import *
 from PySide6.QtWidgets import *
 import pyqtgraph as pg
-
-@dataclass(frozen=True)
-class SourceFindSignal:
-    kind: SourceKind
-    raw_source: list[str]
-
-    def __iter__(self):
-        return iter(astuple(self))
-class GlobalEventBus(QObject):
-    # Define your application-wide events here
-    source_sent = Signal(object)
-
-# Create a single instance at the module level
-bus = GlobalEventBus()
 
 class MenuBarWidget(QMenuBar):
 
@@ -32,8 +21,12 @@ class MenuBarWidget(QMenuBar):
         # Menu de arquivos
         self.addFileMenu()
 
-    def _handle_source_files_selection(self, source_paths):
-        bus.source_sent.emit(SourceFindSignal(SourceKind.FILE, source_paths))
+    def _handle_source_files_selection(self, source_paths: list[Path]):
+        state_bus.source_searched.emit(SourceSearch(
+                SourceKind.FILE,
+                [Path(source_path) for source_path in source_paths]
+            )
+        )
 
     # Menu
     def _create_and_show_source_files_selector(self):
@@ -49,12 +42,16 @@ class MenuBarWidget(QMenuBar):
         self.import_file_dialog.filesSelected.connect(self._handle_source_files_selection)
         self.import_file_dialog.show()
 
-    def _handle_source_folder_selection(self, source_folder):
-        bus.source_sent.emit(SourceFindSignal(SourceKind.FOLDER, source_folder))
+    def _handle_source_folder_selection(self, source_paths: list[Path]):
+        state_bus.source_searched.emit(SourceSearch(
+                    SourceKind.FOLDER,
+                    [Path(source_path) for source_path in source_paths]
+                )
+            )
 
     def _create_source_folder_selector(self):
         self.import_folder_dialog = QFileDialog(self)
-        self.import_file_dialog.setDirectory(QStandardPaths.standardLocations(QStandardPaths.StandardLocation.HomeLocation)[-1])
+        self.import_folder_dialog.setDirectory(QStandardPaths.standardLocations(QStandardPaths.StandardLocation.HomeLocation)[-1])
         self.import_folder_dialog.setWindowTitle("Selecão de pasta fonte")
         self.import_folder_dialog.setViewMode(QFileDialog.ViewMode.List)
         self.import_folder_dialog.setFileMode(QFileDialog.FileMode.Directory)
@@ -78,39 +75,83 @@ class MenuBarWidget(QMenuBar):
         file_menu.addAction(import_file_action)
         file_menu.addAction(import_folder_action)
 
+class DataTreeItem(QTreeWidgetItem):
+    
+    def __lt__(self, other):
+        self_node = self.data(0, QtCore.Qt.ItemDataRole.UserRole)
+        other_node = other.data(0, QtCore.Qt.ItemDataRole.UserRole)
+
+        self_key = (
+            0 if isinstance(self_node, DataGroup) else 1,
+            utils.natural_key(self.text(0)),
+        )
+
+        other_key = (
+            0 if isinstance(other_node, DataGroup) else 1,
+            utils.natural_key(other.text(0)),
+        )
+
+        return self_key < other_key
+
 class DataGroupViewer(QTreeWidget):
     def __init__(self, parent = None):
         super().__init__(parent)
-        self.setHeaderLabels(["Name"])
-        
-        # 1. Enable Drag and Drop
+        self.setHeaderLabel("Grupos")
+
+        # Ativa o sistema de drag and drop
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
-        self.setDragDropMode(QTreeWidget.DragDropMode.InternalMove)
         self.setDropIndicatorShown(True)
+        self.setDragDropMode(QTreeWidget.DragDropMode.InternalMove) # Impede que outras coisas sejam arrastadas para dentro do visualizador
 
-        bus.source_sent.connect(self._handle_new_sources)
+        # Lida com a selecão de items
+        self.itemPressed.connect(self._handle_item_pressed)
 
-    def _handle_new_sources(self, source_find_signal: SourceFindSignal):
-        source_kind, raw_sources = source_find_signal
-        sources = generate_sources_from_paths(source_kind, raw_sources)
-        source_tree = SourceTree(sources)
-        source_tree.grow_tree()
+        # Intercepta o sinal de fontes pesquisadas
+        state_bus.source_searched.connect(self._handle_new_data)
+
+    # Guarda um grupo que foi selecionada para que possamos importar uma coisa diretamente nele
+    def _handle_item_pressed(self, tree_widget_item, i):
+        pass
     
-        self.add_nested_items(source_tree.root, self.invisibleRootItem())
+    def _handle_new_data(self, source_search: SourceSearch):
 
-    def add_nested_items(self, source_node: SourceTreeNode, parent_item):
-        """Recursively populates the tree and flags items as editable."""
+        def add_data_item(parent_widget_item: DataTreeItem, data: Data):
+            data_item = DataTreeItem(parent_widget_item, [data.name])
+            data_item.setData(0, QtCore.Qt.ItemDataRole.UserRole, data)
+            data_item.setFlags(data_item.flags() & ~Qt.ItemFlag.ItemIsDropEnabled)
 
-        item = QTreeWidgetItem(parent_item, [source_node.name])
-        item.setFlags(item.flags() | Qt.ItemFlag.Item)
+        def add_data_group_item_recursive(parent_widget_item: DataTreeItem, data_group: DataGroup):
+            new_data_group_item = DataTreeItem(parent_widget_item, [data_group.name])
+            new_data_group_item.setData(0, QtCore.Qt.ItemDataRole.UserRole, data_group)
+            # Permite que o nome do grupo seja editado
+            new_data_group_item.setFlags(new_data_group_item.flags() | Qt.ItemFlag.ItemIsEditable)
 
-        if source_node.source.kind.is_file():
-            item.setToolTip(0, str(source_node.name))
-        if source_node.source.kind.is_folder():
-            for key, child_node in source_node.children.items():
-                self.add_nested_items(child_node, item)
-        
+            # Adiciona os items que representam os dados do grupo
+            [add_data_item(new_data_group_item, data) for data in data_group.data_list]
+
+            # Inicia uma execução recusiva para adicionar os subgrupos do grupo que iniciou a cadeia de execução
+            [add_data_group_item_recursive(new_data_group_item, sub_group) for sub_group in data_group.groups]
+
+            # Faz com que todas os sub grupos e dados guardados nesse item sejam organizados em: grupo -> dados (em ordem alfabética)
+            new_data_group_item.sortChildren(0, QtCore.Qt.SortOrder.AscendingOrder)
+
+        # TODO: mudar para o root selecioando
+        current_parent_widget_item = self.invisibleRootItem()
+
+        imported_pair = state_bus.data_cluster.import_source_as_data(
+            source_search,
+            None, # TODO: se já houver uma pasta pré-selecionada, implementar
+            True, # TODO: criar uma opção para deixar a pessoa escolher se ela vai pesquisar os sub-grupos do caminho,
+        )
+
+        imported_source_kind, imported_source = imported_pair
+
+        if imported_source_kind.is_file():
+            # Distribui os dados importados o grupo selecionado ou dei
+            [add_data_item(current_parent_widget_item, data) for data in imported_source]
+        else:
+            [add_data_group_item_recursive(current_parent_widget_item, data_group) for data_group in imported_source]
 
 class MainContentWidget(QWidget):
     def __init__(self, parent = None):
@@ -198,7 +239,6 @@ class AppMainWindow(QMainWindow):
         self.main_content_widget = MainContentWidget()
         self.setCentralWidget(self.main_content_widget)
 
-
 def generate_random_hex():
     # 0xFFFFFF corresponds to the decimal number 16777215
     return f"#{random.randint(0, 0xFFFFFF):06x}"
@@ -208,15 +248,15 @@ pxMode=True: This forces PyQtGraph to pre-render the symbols into a single image
 pen=None or width=1: Straying away from standard pen sizes causes heavy drawing bottlenecks in the Qt framework.
 useCache=True: Reuses pre-rendered elements.
 """
-def add_graph(data_nodes: tuple[SourceTreeNode]):
-    x_data = data_nodes[0].data.x
-    y_data = data_nodes[0].data.y
+# def add_graph(data_nodes: tuple[SourceTreeNode]):
+#     x_data = data_nodes[0].data.x
+#     y_data = data_nodes[0].data.y
 
-    plot = pg.PlotWidget()
-    plot.plot(x_data, y_data)
-    plot.showGrid(True)
+#     plot = pg.PlotWidget()
+#     plot.plot(x_data, y_data)
+#     plot.showGrid(True)
 
-    return plot
+#     return plot
 
 
 def run_application():
