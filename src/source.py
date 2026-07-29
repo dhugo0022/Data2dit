@@ -1,8 +1,6 @@
 from enum import Enum
 from dataclasses import dataclass, astuple
 from pathlib import Path
-import typing
-import os
 
 class SourceKind(Enum):
     FILE = 0,

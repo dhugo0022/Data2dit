@@ -1,11 +1,9 @@
 import numpy as np
 from numpy.typing import NDArray
 from dataclasses import dataclass, astuple, field
-from typing import *
 from pathlib import Path
 
-from source import *
-
+from source import Source, SourceSearch, SourceKind
 @dataclass(frozen=True)
 class DataContent:
     x: NDArray[np.float64]
@@ -14,20 +12,20 @@ class DataContent:
     def __iter__(self):
         return iter(astuple(self))
 
-class DataKind():
+class DataExtractor():
 
     def __init__(self, name: str, file_extension: str):
         self.name = name
         self.file_extension = file_extension
 
-    def extract_data_from_file_content(content: bytes) -> list[NDArray[np.float64]]:
+    def extract_data(content: bytes) -> list[NDArray[np.float64]]:
         pass
 
-class XY_DataKind(DataKind):
+class XY_DataExtractor(DataExtractor):
     def __init__(self):
         super().__init__("XY", "txt")
 
-    def extract_data_from_file_content(self, content: bytes):
+    def extract_data(self, content: bytes):
         xy_data = content.decode("utf-8")
 
         # Se houver ocorrências de números com "," para separar decimais, converte para "."
@@ -47,16 +45,16 @@ class XY_DataKind(DataKind):
         
         return DataContent(x_axis, y_axis)
     
-class CSV_DataKind(DataKind):
-    def __init__(self):
-        super().__init__("CSV", "csv")
-
-DATA_KINDS = {
-    "XY": XY_DataKind(),
-    "CSV": CSV_DataKind(),
+DATA_EXTRACTORS = {
+    "XY": XY_DataExtractor(),
 }
 
-DATA_EXTENSIONS = (*map(lambda data_kind: data_kind.file_extension, DATA_KINDS.values()),)
+DATA_EXTENSIONS = (*map(lambda data_extractor: data_extractor.file_extension, DATA_EXTRACTORS.values()),)
+
+DATA_EXTRACTORS_BY_EXTENSION = dict(zip(
+    DATA_EXTENSIONS,
+    DATA_EXTRACTORS.values()
+))
 
 QT_FILE_DIALOG_NAME_FILTER = " ".join(map(lambda extension: f"*.{extension}", DATA_EXTENSIONS))
 
@@ -70,6 +68,27 @@ class Data(Node):
     source: Source | None = None
     content: DataContent | None = None
 
+    def extract_content(self) -> bool:
+        """
+        Retorna verdadeiro se os dados foram extraídos da fonte e convertidos com sucesso
+        e false, caso contrário.
+        """
+        path = self.source.path
+        
+        if not path.exists():
+            return False
+        
+        content = path.read_bytes()
+
+        source_extension = path.suffix[1:]
+        data_extractor = DATA_EXTRACTORS_BY_EXTENSION[source_extension]
+
+        if data_extractor is None:
+            return False
+
+        self.content = data_extractor.extract_data(content)
+        return True
+
 @dataclass
 class DataGroup(Node):
     data_list: list[Data] = field(default_factory=list)
@@ -78,8 +97,19 @@ class DataGroup(Node):
     def has_data(self):
         return len(self.data_list) > 0
 
+    def extract_data(self, recursive: bool = False):
+        """
+        Executa a extração do conteúdo de todos os estados que estão na lista de dados dele.
+        Caso recursive esteja ativado, fará o mesmo para todos os seu sub grupos de maneira
+        recursiva.
+        """
+        all([data.extract_content() for data in self.data_list])
+
+        if recursive:
+            [sub_group.extract_data(recursive) for sub_group in self.groups]
+
 @dataclass
-class DataCluster():
+class DataCluster:
     root_groups: list[DataGroup] = field(default_factory=list, init=False, )
     ungrouped_data: list[DataContent] = field(default_factory=list, init=False)
 
@@ -186,7 +216,9 @@ class DataCluster():
         if path_extension not in DATA_EXTENSIONS:
             raise ValueError(f"O formato \"{path_extension}\" do arquivo não é suportado: ${file_path.absolute}")
 
-        data = Data(file_path.name, source = Source(SourceKind.FILE, file_path.absolute))
+        sanitized_data_name = file_path.name.removesuffix(file_path.suffix)
+        data = Data(sanitized_data_name, source = Source(SourceKind.FILE, file_path))
+        data.extract_content()
         self.add_data(data, parent)
 
         return data
