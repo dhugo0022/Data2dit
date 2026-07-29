@@ -3,11 +3,19 @@ name = "data2dit"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 dependencies = [
-    "numpy>=2.5.1",
-    "pandas>=3.0.3",
-    "pyqtgraph>=0.14.0",
-    "pyside6>=6.11.1",
-    "scipy>=1.18.0",
+    "numpy==2.5.1",
+    "pandas==3.0.3",
+    "pyqtgraph==0.14.0",
+    "pyside6==6.11.1",
+    "scipy==1.18.0",
 ]
+
+[dependency-groups]
+dev = ["poethepoet>=0.48.0"]
+
+[tool.poe.tasks]
+main = "uv run src/main.py"
+main-qrc = "uv run src/main.py --use-qrc"
+generate-qrc-resources = "uv run pyside6-rcc src/assets/resources.qrc -o src/resources_rc.py"
