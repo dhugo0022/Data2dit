@@ -6,8 +6,10 @@ from PySide6.QtWidgets import QTreeWidgetItem
 
 class GlobalEventBus(QObject):
     source_searched = Signal(SourceSearch)
+
     data_object_double_clicked = Signal(QTreeWidgetItem)
     data_object_clicked = Signal(QTreeWidgetItem)
+    data_object_name_changed = Signal(QTreeWidgetItem)
 
     def __init__(self):
         super().__init__()

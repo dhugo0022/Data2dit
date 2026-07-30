@@ -25,7 +25,6 @@ def _filesystem_path(*parts: str) -> str:
     """Returns an absolute filesystem path."""
     return str(ASSETS_DIR.joinpath(*parts))
 
-
 # Utiliza o sistema de geração de icones compilados do Qt
 def _qrc_path(*parts: str) -> str:
     """Returns a Qt Resource path."""

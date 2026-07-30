@@ -1,6 +1,6 @@
 
 from source import SourceSearch
-from data import Data, DataGroup
+from data import Node, Data, DataGroup
 import utils
 from state import state_bus
 import resources
@@ -56,6 +56,7 @@ class DataGroupViewer(QTreeWidget):
         # Intercepta o sinal de seleção de item ao dar double click
         self.itemDoubleClicked.connect(self._handle_item_double_click)
         self.itemClicked.connect(self._handle_item_click)
+        self.itemChanged.connect(self._handle_item_changed)
 
         # Intercepta o sinal de fontes pesquisadas
         state_bus.source_searched.connect(self._handle_new_data)
@@ -115,14 +116,32 @@ class DataGroupViewer(QTreeWidget):
                 state_bus.data_cluster.move_data(data_object, new_parent)
 
         super().dropEvent(event)
-    
-    # Guarda um grupo que foi selecionada para que possamos importar uma coisa diretamente nele
+
+    # Usado para lidar com ações de clique duplo no widget
     def _handle_item_double_click(self, pressed_widget_item: DataTreeItem, _: int):
         state_bus.data_object_double_clicked.emit(pressed_widget_item)
 
+    # Usado para lidar com ações de clique simples no widget
     def _handle_item_click(self, pressed_widget_item: DataTreeItem, _: int):
         state_bus.data_object_clicked.emit(pressed_widget_item)
+
+    def _handle_item_changed(self, changed_widget_item: DataTreeItem, _: int):
+        changed_item_name = changed_widget_item.text(0)
+        data_object: Node = changed_widget_item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+
+        # Verificação para caso o nome tenha mudado
+        old_name = data_object.name
+        if old_name != changed_item_name: # Quer dizer que o nome mudou
+            """
+            Como Data e DataObject são subclasses de Node, não há perigo
+            simplesmente chamar a função de mudar de nome. Já que esta
+            função é definida no próprio escopo de Node
+            """
+            data_object.set_name(changed_item_name)
+            state_bus.data_object_name_changed.emit(changed_widget_item)
         
+
+    # Lida com a importação de novos dados
     def _handle_new_data(self, source_search: SourceSearch):
         # Desativa e ativa (no final) o sorteamento automático depois da inserção dos itens 
         # Serve para prevenir problemas de performance: https://doc.qt.io/qt-6/qtreeview.html#sortingEnabled-prop
@@ -147,9 +166,8 @@ class DataGroupViewer(QTreeWidget):
             # Adiciona os items que representam os dados do grupo
             [add_data_item(new_data_group_item, data) for data in data_group.data_list]
 
-            # Inicia uma execução recusiva para adicionar os subgrupos do grupo que iniciou a cadeia de execução
+            # Inicia uma execução recursiva para adicionar os subgrupos do grupo que iniciou a cadeia de execução
             [add_data_group_item_recursive(new_data_group_item, sub_group) for sub_group in data_group.groups]
-
 
         current_parent_widget_item = self.invisibleRootItem()
         current_parent_data_group = None

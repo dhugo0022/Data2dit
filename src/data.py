@@ -63,6 +63,12 @@ class Node():
     name: str
     parent: DataGroup | None = None
 
+    def set_name(self, new_name: str):
+        self.name = new_name
+
+    def set_parent(self, new_parent: DataGroup):
+        self.parent = new_parent
+        
 @dataclass
 class Data(Node):
     source: Source | None = None

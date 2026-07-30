@@ -1,7 +1,7 @@
 from typing import Dict
 from functools import partial
 
-from data import Data, DataGroup
+from data import Node, Data, DataGroup
 from state import state_bus
 
 from PySide6.QtWidgets import QTreeWidgetItem
@@ -23,7 +23,7 @@ class DataGraphingLayout(pg.GraphicsLayoutWidget):
 
         state_bus.data_object_double_clicked.connect(self._handle_item_double_clicked)
         state_bus.data_object_clicked.connect(self._handle_item_clicked)
-
+        state_bus.data_object_name_changed.connect(self._handle_item_name_changed)
 
     # Só deve ser excutado para um só dado
     def _plot_data(self, data_item: QTreeWidgetItem, plot_item: pg.PlotItem.PlotItem = None):
@@ -42,6 +42,11 @@ class DataGraphingLayout(pg.GraphicsLayoutWidget):
             data_item.setSelected(True)
 
         x, y = data.content
+
+        # Coloca o nome do próprio dado para o caso do gráfico de um dado standalone
+        if plot_item is None:
+            data_plot_item.setTitle(data.name)
+
         plotted_data_item = data_plot_item.plot(x, y, pen = data_color)
 
         # Faz com que a curva seja clickável
@@ -53,9 +58,9 @@ class DataGraphingLayout(pg.GraphicsLayoutWidget):
         """
         Caso nenhum PlotItem tenha sido especificado, a Data vai ser
         mostrada de forma standalone. Portanto, ela precisa ser 
-        registrada no dicionário de gráficos. Isso defere caso ela
+        registrada no dicionário de gráficos. Isso difere ela caso
         já esteja sendo posta no gráfico de um grupo, já que o gráfico
-        do próprio grupo já ser regsitrado.
+        do próprio grupo já vai ser registrado.
         """
         if plot_item is None:
             self.plots[data_item] = data_plot_item
@@ -107,3 +112,19 @@ class DataGraphingLayout(pg.GraphicsLayoutWidget):
         self.clear()
         self.plots.clear()
         self._plot_data_group(selected_item)
+
+    def _handle_item_name_changed(self, changed_name_item: QTreeWidgetItem):
+        """
+        Se esse item tiver um gráfico próprio dele, então teremos duas opções:
+        - O gráfico de grupo que está mostrando os seus dados
+        - O gráfico de um dado standalone que está mostrando seu próprio dado
+        Independente do que seja, só precisamos mudar o nome do gráfico
+        """
+        plot_item = self.plots.get(changed_name_item)
+
+        # Caso não haja nenhum gráfico para aquele item, não precisa mudar
+        if plot_item == None:
+            return
+
+        # O item retornado no parâmetro da função já é o item atualizado
+        plot_item.setTitle(changed_name_item.text(0))
