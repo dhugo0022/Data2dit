@@ -7,10 +7,14 @@ import resources
 
 import PySide6.QtCore as QtCore
 from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem, QAbstractItemView
-from PySide6.QtGui import QIcon, QBrush, QColor
-
+from PySide6.QtGui import QIcon, QColor
+ 
 class DataTreeItem(QTreeWidgetItem):
-    
+
+    """
+    Sistema de sortear por tipo de fonte de dado.
+    Onde a prioridade seria o grupo de dadso e o resto são os dados
+    """
     def __lt__(self, other):
         self_node = self.data(0, QtCore.Qt.ItemDataRole.UserRole)
         other_node = other.data(0, QtCore.Qt.ItemDataRole.UserRole)
@@ -53,13 +57,15 @@ class DataGroupViewer(QTreeWidget):
 
         # == Lidando com os Signals ==
 
-        # Intercepta o sinal de seleção de item ao dar double click
-        self.itemDoubleClicked.connect(self._handle_item_double_click)
-        self.itemClicked.connect(self._handle_item_click)
-        self.itemChanged.connect(self._handle_item_changed)
-
         # Intercepta o sinal de fontes pesquisadas
         state_bus.source_searched.connect(self._handle_new_data)
+
+        # Intercepta o sinal de quando o item sofre um double click
+        self.itemDoubleClicked.connect(self._handle_item_double_click)
+        # Intercepta o sinal de quando o item sofre um clique simples
+        self.itemClicked.connect(self._handle_item_click)
+        # Intercepta o sinal de quando o item sofre alguma modificação nas suas propriedades
+        self.itemChanged.connect(self._handle_item_changed)
 
     # Desseleciona completamente a seleção prévia caso o usuário clique
     # em um lugar em branco.
@@ -71,6 +77,58 @@ class DataGroupViewer(QTreeWidget):
             self.setCurrentItem(None)
 
         super().mousePressEvent(event)
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        selected_items = self.selectedItems()
+
+        # Caso o usário tenho apertado delete e tenha um item selecionado
+        if key == QtCore.Qt.Key.Key_Delete and len(selected_items) > 0:
+            """
+            Para impedir que um grupo seja deletado primeiro que seus dados ou subgrupos
+            caso todos eles estejam selecionados, só precisaremos verificar se o grupo pai
+            de algo que esteja selecionado, também está na lista de remoção
+            """
+            deletion_list: list[QTreeWidgetItem] = []
+            for selected_item in selected_items:
+
+                current_parent = selected_item.parent()
+                mark_for_deletion = True
+
+                while current_parent is not None:
+                    if current_parent in selected_items:
+                        mark_for_deletion = False
+                        break
+
+                    current_parent = current_parent.parent()
+
+                if mark_for_deletion:
+                    deletion_list.append(selected_item)
+            
+            for selected_item in deletion_list:
+                data_object: Node = selected_item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+
+                if data_object.is_data():
+                    state_bus.data_cluster.remove_data(data_object)
+                else:
+                    state_bus.data_cluster.remove_group(data_object)
+
+                current_selected_item_parent = selected_item.parent()
+                if current_selected_item_parent is None:
+                    """
+                    Caso ele não tenha pai, ele está na raiz do QTreeWidget. Logo, precisamos
+                    remover diretamente dela
+                    """
+                    root_item_index = self.indexOfTopLevelItem(selected_item)
+                    self.takeTopLevelItem(root_item_index)
+                else:
+                    # Caso contrário, só precisamos remover do pai do item selecionado
+                    current_selected_item_parent.removeChild(selected_item)
+
+                # Emite o sinal de que o objeto foi deletado
+                state_bus.data_object_deleted.emit(selected_item)
+
+        return super().keyPressEvent(event)
 
     """
     Como o Qt automaticamente toma conta da transferência de pais dos itens
@@ -85,23 +143,14 @@ class DataGroupViewer(QTreeWidget):
         new_parent: DataGroup | None = None
 
         if target_item is not None:
+            target_data = target_item.data(0, QtCore.Qt.ItemDataRole.UserRole)
             """
             Mesmo se colocara a flag de impedir que o item receba itens, ainda assim
-            esse evento de drop é ativado. Logo, temos que cuidar desse caso também
-            já que não pode ser possível que um item de dado seja jogado dentro de
-            outro.
+            esse evento de drop é ativado caso itens sejam jogados acima ou abaixo de
+            outros dados. Neste caso, só precisamos pegar o pai do item de dado.
+            De outro modo, é um grupo, então só pegamos ele mesmo.
             """
-            if isinstance(target_item.data(0, QtCore.Qt.ItemDataRole.UserRole), Data):
-                return
-
-            """
-            Como só é possível acionar esse evento para o movimento de dados e grupos de dados
-            para dentro de outros grupos de dados, não precisamos temos como pegar um "Data" 
-            ao invés de um "DataGroup".
-            A exceção é quando as coisas são movidas para fora de qualquer outro grupo, porém
-            a função de mover do DataCluster já lida com isso.
-            """
-            new_parent = target_item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+            new_parent = target_data.parent if isinstance(target_data, Data) else target_data
 
         """
         Mesmo que tanto DataGroup, quanto Data, sejam descendentes de Node, ainda assim
@@ -118,14 +167,15 @@ class DataGroupViewer(QTreeWidget):
         super().dropEvent(event)
 
     # Usado para lidar com ações de clique duplo no widget
-    def _handle_item_double_click(self, pressed_widget_item: DataTreeItem, _: int):
+    def _handle_item_double_click(self, pressed_widget_item: QTreeWidgetItem, _: int):
         state_bus.data_object_double_clicked.emit(pressed_widget_item)
 
     # Usado para lidar com ações de clique simples no widget
-    def _handle_item_click(self, pressed_widget_item: DataTreeItem, _: int):
+    def _handle_item_click(self, pressed_widget_item: QTreeWidgetItem, _: int):
         state_bus.data_object_clicked.emit(pressed_widget_item)
 
-    def _handle_item_changed(self, changed_widget_item: DataTreeItem, _: int):
+    # Caso o item seja modificado de qualquer forma
+    def _handle_item_changed(self, changed_widget_item: QTreeWidgetItem, _: int):
         changed_item_name = changed_widget_item.text(0)
         data_object: Node = changed_widget_item.data(0, QtCore.Qt.ItemDataRole.UserRole)
 
@@ -139,7 +189,6 @@ class DataGroupViewer(QTreeWidget):
             """
             data_object.set_name(changed_item_name)
             state_bus.data_object_name_changed.emit(changed_widget_item)
-        
 
     # Lida com a importação de novos dados
     def _handle_new_data(self, source_search: SourceSearch):
@@ -151,7 +200,7 @@ class DataGroupViewer(QTreeWidget):
             data_item = DataTreeItem(parent_widget_item, [data.name])
             data_item.setData(0, QtCore.Qt.ItemDataRole.UserRole, data)
             data_item.setIcon(0, QIcon(resources.icon("data_icon.svg")))
-            data_item.setForeground(0, QBrush(QColor(utils.generate_random_hex())))
+            data_item.setForeground(0, QColor(utils.generate_random_hex()))
             # Remove a possibilidade de dropar outros itens dentro dele
             data_item.setFlags((data_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsDropEnabled) | QtCore.Qt.ItemFlag.ItemIsEditable)
 
@@ -193,4 +242,5 @@ class DataGroupViewer(QTreeWidget):
             [add_data_group_item_recursive(current_parent_widget_item, data_group) for data_group in imported_source]
 
         self.setSortingEnabled(True)
-        self.sortItems(0, QtCore.Qt.SortOrder.AscendingOrder)
+        # Sorteia com respeito ao indicador de tipo de sorteio escolhido no header
+        self.sortItems(0, self.header().sortIndicatorOrder())

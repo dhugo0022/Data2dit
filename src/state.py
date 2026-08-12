@@ -10,6 +10,7 @@ class GlobalEventBus(QObject):
     data_object_double_clicked = Signal(QTreeWidgetItem)
     data_object_clicked = Signal(QTreeWidgetItem)
     data_object_name_changed = Signal(QTreeWidgetItem)
+    data_object_deleted = Signal(QTreeWidgetItem)
 
     def __init__(self):
         super().__init__()

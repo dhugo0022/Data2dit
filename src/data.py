@@ -68,7 +68,13 @@ class Node():
 
     def set_parent(self, new_parent: DataGroup):
         self.parent = new_parent
-        
+
+    def is_data(self):
+        return isinstance(self, Data)
+    
+    def is_data_group(self):
+        return isinstance(self, DataGroup)
+     
 @dataclass
 class Data(Node):
     source: Source | None = None

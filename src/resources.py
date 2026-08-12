@@ -1,6 +1,11 @@
 from pathlib import Path
 import sys
 
+"""
+Mesmo que não use, ele precisa ser importado para que, caso acessemos
+os recursos gerados pelo sistema de recursos do Qt, os recursos possam
+ser usados.
+"""
 import resources_rc
 
 from PySide6.QtGui import QIcon, QPixmap
