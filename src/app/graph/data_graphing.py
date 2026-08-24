@@ -4,7 +4,7 @@ from functools import partial
 from data import Node, Data, DataGroup
 from state import state_bus
 
-from PySide6.QtWidgets import QTreeWidgetItem, QGraphicsSceneHoverEvent
+from PySide6.QtWidgets import QTreeWidgetItem, QLabel
 import PySide6.QtGui as QtGui
 import PySide6.QtCore as QtCore
 import pyqtgraph as pg
@@ -44,10 +44,57 @@ class DataGraphingLayout(pg.GraphicsLayoutWidget):
 
         self.plots: Dict[QTreeWidgetItem, pg.PlotItem.PlotItem] = {}
 
+        # Label que mostra as coordenadas do cursor do mouse sobre os respectivos gráficos
+        self.coord_label = QLabel(self)
+        self.coord_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        self.coord_label.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.coord_label.setText("x: 0, y: 0")
+
+        # Posicionar manulamente a label
+        self.coord_label_margin = 10
+        self.coord_label.adjustSize()
+        self._adjust_coord_label_position()
+
+        # Sinais do gráfico
         state_bus.data_object_double_clicked.connect(self._handle_item_double_clicked)
         state_bus.data_object_clicked.connect(self._handle_item_clicked)
         state_bus.data_object_name_changed.connect(self._handle_item_name_changed)
         state_bus.data_object_deleted.connect(self._handle_item_deleted)
+        state_bus.data_object_moved.connect(self._handle_item_moved)
+
+    def _adjust_coord_label_position(self):
+        self.coord_label.move(self.width() - self.coord_label.width() - self.coord_label_margin, 0)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+
+        if not hasattr(self, "coord_label"):
+            return
+        
+        self.coord_label.adjustSize()
+        self._adjust_coord_label_position()
+
+    def leaveEvent(self, event):
+        self.coord_label.setText("x: 0, y: 0")
+        self.coord_label.adjustSize()
+        self._adjust_coord_label_position()
+
+        super().leaveEvent(event)
+
+    def _handle_mouse_coordenate(self, plot_item: pg.PlotItem.PlotItem, event):
+        pos = event[0]
+
+        # Impede que a coordenada seja ajustada fora do contexto de algum gráfico
+        if plot_item.sceneBoundingRect().contains(pos):
+
+            # Mapea as coordenadas para o contexto de cada gráfico ao qual o mouse está sobre
+            mouse_point = plot_item.vb.mapSceneToView(pos)
+            
+            x = mouse_point.x()
+            y = mouse_point.y()
+            self.coord_label.setText(f"x: {x:.2f}, y: {y:.2f}")
+            self.coord_label.adjustSize()
+            self._adjust_coord_label_position()
 
 
     # Só deve ser excutado para um só dado
@@ -57,6 +104,9 @@ class DataGraphingLayout(pg.GraphicsLayoutWidget):
 
         # Desativa o menu do plot
         plot_item.setMenuEnabled(False)
+
+        # Adiciona linhas de gráfico
+        plot_item.showGrid(x = True, y = True, alpha = 0.3)
 
         # Pega a cor do nome no item referente ao dado para pintar a linha no gráfico, referente ao mesmo dado
         data_color = data_item.foreground(0).color()
@@ -86,7 +136,6 @@ class DataGraphingLayout(pg.GraphicsLayoutWidget):
         if parent_plot_item is None:
             plot_item.setTitle(data.name)
 
-        
         # plotted_data_item = plot_item.plot(x, y, pen = data_color, hoverPen = hover_data_color, hoverable = True)
         plotted_data_item = HoverableCurveItem(x, y, pen = pg.mkPen(data_color, width = default_pen_width))
         plotted_data_item.setClickable(True, width = default_pen_width)
@@ -111,6 +160,8 @@ class DataGraphingLayout(pg.GraphicsLayoutWidget):
         """
         if parent_plot_item is None:
             self.plots[data_item] = plot_item
+
+        plot_item.proxy = pg.SignalProxy(plot_item.scene().sigMouseMoved, rateLimit=60, slot=partial(self._handle_mouse_coordenate, plot_item))
 
     # Só deve ser executado para um grupo de dados
     def _plot_data_group(self, selected_item: QTreeWidgetItem):
@@ -156,7 +207,8 @@ class DataGraphingLayout(pg.GraphicsLayoutWidget):
         if not (modifiers & QtGui.Qt.KeyboardModifier.AltModifier):
             return
 
-        self.clear()
+        # self.clear()
+        [self.removeItem(plot_item) for plot_item in self.plots.values()]
         self.plots.clear()
         self._plot_data_group(selected_item)
 
@@ -177,7 +229,6 @@ class DataGraphingLayout(pg.GraphicsLayoutWidget):
         plot_item.setTitle(changed_name_item.text(0))
 
     def _handle_item_deleted(self, deleted_item: QTreeWidgetItem):
-
         data_object: Data | DataGroup = deleted_item.data(0, QtCore.Qt.ItemDataRole.UserRole)
 
         if data_object.is_data():
@@ -215,3 +266,43 @@ class DataGraphingLayout(pg.GraphicsLayoutWidget):
             self.removeItem(group_plot_item)
             self.plots.pop(deleted_item)
 
+    def _handle_item_moved(self, moved_item: QTreeWidgetItem):
+        data_object: Data | DataGroup = moved_item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+
+        if data_object.is_data():
+
+            # Se o dado está sendo mostrado de maneira standalone
+            if self.plots.get(moved_item) is not None:
+                # == Não vamos fazer nada ==
+                return
+
+            # Se o dado estiver sendo mostrado em algum gráfico, tira ele de lá
+            for tree_widget_item, plot_item in self.plots.items():
+                for plot_item_child in plot_item.listDataItems():
+                    data_item = plot_item_child.d2d_data_item # Este é o atributo injetado durante o _plot_data
+                    
+                    if moved_item is data_item:
+                        plot_item.removeItem(plot_item_child)
+
+                        if len(plot_item.listDataItems()) < 1:
+                            [self.removeItem(plot_item) for plot_item in self.plots.values()]
+
+                        break
+
+
+                plot_item_children_data_item = [plot_item_child.d2d_data_item for plot_item_child in plot_item.listDataItems()]
+
+                # Se ele for movido para um grupo, cujo gŕafico já está sendo plotado, e ele não está lá, mostre ele lá.
+                if moved_item.parent() is tree_widget_item and moved_item not in plot_item_children_data_item:
+                    self._plot_data(moved_item, plot_item)
+            
+        else:
+            # Não faz nada
+            pass
+            # group_plot_item = self.plots.get(moved_item)
+
+            # if group_plot_item is None:
+            #     return
+
+            # self.removeItem(group_plot_item)
+            # self.plots.pop(moved_item)
