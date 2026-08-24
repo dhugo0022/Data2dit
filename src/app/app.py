@@ -2,7 +2,7 @@ import sys
 import random
 
 from app.menu.menubar import MenuBarWidget
-from app.data.data_viewer import DataGroupViewer
+from app.viewer.data_viewer import DataTreeViewer
 from app.graph.data_graphing import DataGraphingLayout
 
 import PySide6.QtCore as QtCore
@@ -35,8 +35,11 @@ class MainContentWidget(QWidget):
 
         left_panel_layout = QVBoxLayout()
 
-        data_group_viewer = DataGroupViewer()
-        left_panel_layout.addWidget(data_group_viewer)
+        data_tree_viewer = DataTreeViewer()
+        # pipeline_viewer = DataGroupViewer()
+        
+        left_panel_layout.addWidget(data_tree_viewer)
+        # left_panel_layout.addWidget(pipeline_viewer)
 
         self.left_panel_container.setLayout(left_panel_layout)
         return self.left_panel_container
@@ -105,6 +108,9 @@ def run_application():
     app = QApplication()
     app.setApplicationName("data2dit")
     app.setApplicationDisplayName("Data2dit")
+
+    # Adiciona suporte para modo escuro
+    app.setStyle("Fusion")
 
     # Ativa o anti-aliasing do Pyqtgraph
     pg.setConfigOptions(antialias=True)
